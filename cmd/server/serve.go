@@ -23,113 +23,96 @@ package server
 
 import (
 	"crypto/tls"
-	"fmt"
 	"net/http"
+	"time"
 
-	"github.com/gobuffalo/packr"
-	"github.com/jmoiron/sqlx"
+	"github.com/ory/analytics-go/v4"
+
+	"github.com/ory/keto/driver"
+	"github.com/ory/x/logrusx"
+
 	"github.com/julienschmidt/httprouter"
-	"github.com/meatballhat/negroni-logrus"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/urfave/negroni"
 
-	"github.com/ory/go-convenience/stringslice"
+	"github.com/ory/viper"
+
 	"github.com/ory/graceful"
-	"github.com/ory/herodot"
-	"github.com/ory/keto/engine"
 	"github.com/ory/keto/engine/ladon"
+	"github.com/ory/x/stringslice"
 
 	// This forces go mod vendor to look for the package rego and its subpackages
 	_ "github.com/ory/keto/engine/ladon/rego"
-	"github.com/ory/keto/storage"
 	"github.com/ory/x/cmdx"
 	"github.com/ory/x/corsx"
-	"github.com/ory/x/dbal"
-	"github.com/ory/x/flagx"
 	"github.com/ory/x/healthx"
 	"github.com/ory/x/metricsx"
+	"github.com/ory/x/reqlog"
 	"github.com/ory/x/tlsx"
 )
 
 // RunServe runs the Keto API HTTP server
 func RunServe(
 	logger *logrus.Logger,
-	buildVersion, buildHash string, buildTime string,
+	version, commit string, date string,
 ) func(cmd *cobra.Command, args []string) {
 	return func(cmd *cobra.Command, args []string) {
-		box := packr.NewBox("../../engine/ladon/rego")
-
-		compiler, err := engine.NewCompiler(box, logger)
-		cmdx.Must(err, "Unable to initialize compiler: %s", err)
-
-		writer := herodot.NewJSONWriter(logger)
-		//writer.ErrorEnhancer = nil
-
-		var s storage.Manager
-		checks := map[string]healthx.ReadyChecker{}
-
-		err = dbal.Connect(viper.GetString("DATABASE_URL"), logger,
-			func() error {
-				s = storage.NewMemoryManager()
-				checks["storage"] = healthx.NoopReadyChecker
-				return nil
-			},
-			func(db *sqlx.DB) error {
-				ss := storage.NewSQLManager(db)
-				checks["storage"] = db.Ping
-				s = ss
-				return nil
-			},
+		d := driver.NewDefaultDriver(
+			logrusx.New(),
+			version, commit, date,
 		)
-		if err != nil {
-			logger.WithError(err).Fatalf("DBAL was unable to connect to the database")
-			return
-		}
-
-		sh := storage.NewHandler(s, writer)
-		e := engine.NewEngine(compiler, writer)
 
 		router := httprouter.New()
-		ladon.NewEngine(s, sh, e, writer).Register(router)
-		healthx.NewHandler(writer, buildVersion, checks).SetRoutes(router)
+		d.Registry().LadonEngine().Register(router)
+		d.Registry().HealthHandler().SetRoutes(router, true)
 
 		n := negroni.New()
-		n.Use(negronilogrus.NewMiddlewareFromLogger(logger, "keto"))
+		n.Use(reqlog.NewMiddlewareFromLogger(logger, "keto").ExcludePaths(healthx.ReadyCheckPath, healthx.AliveCheckPath))
 
-		if !flagx.MustGetBool(cmd, "disable-telemetry") {
-			logger.Println("Transmission of telemetry data is enabled, to learn more go to: https://www.ory.sh/docs/ecosystem/sqa")
+		if tracer := d.Registry().Tracer(); tracer.IsLoaded() {
+			n.Use(tracer)
+		}
 
-			m := metricsx.NewMetricsManager(
-				metricsx.Hash("DATABASE_URL"),
-				viper.GetString("DATABASE_URL") != "memory",
-				"jk32cFATnj9GKbQdFL7fBB9qtKZdX9j7",
-				stringslice.Merge(
+		metrics := metricsx.New(cmd, logger,
+			&metricsx.Options{
+				Service:       "ory-keto",
+				ClusterID:     metricsx.Hash(viper.GetString("DATABASE_URL")),
+				IsDevelopment: viper.GetString("DATABASE_URL") != "memory",
+				WriteKey:      "jk32cFATnj9GKbQdFL7fBB9qtKZdX9j7",
+				WhitelistedPaths: stringslice.Merge(
 					healthx.RoutesToObserve(),
 					ladon.RoutesToObserve(),
 				),
-				logger,
-				"ory-keto",
-				100,
-				"",
-			)
-			go m.RegisterSegment(buildVersion, buildHash, buildTime)
-			go m.CommitMemoryStatistics()
-			n.Use(m)
-		}
+				BuildVersion: version,
+				BuildTime:    date,
+				BuildHash:    commit,
+				Config: &analytics.Config{
+					Endpoint:             "https://sqa.ory.sh",
+					GzipCompressionLevel: 6,
+					BatchMaxSize:         500 * 1000,
+					BatchSize:            250,
+					Interval:             time.Hour * 24,
+				},
+			},
+		)
+		n.Use(metrics)
 
 		n.UseHandler(router)
-		c := corsx.Initialize(n, logger)
+		c := corsx.Initialize(n, logger, "serve")
 
-		addr := fmt.Sprintf("%s:%s", viper.GetString("HOST"), viper.GetString("PORT"))
 		server := graceful.WithDefaults(&http.Server{
-			Addr:    addr,
+			Addr:    d.Configuration().ListenOn(),
 			Handler: c,
 		})
 
-		cert, err := tlsx.HTTPSCertificate()
+		cert, err := tlsx.Certificate(
+			viper.GetString("serve.tls.cert.base64"),
+			viper.GetString("serve.tls.key.base64"),
+			viper.GetString("serve.tls.cert.path"),
+			viper.GetString("serve.tls.key.path"),
+		)
 		if errors.Cause(err) == tlsx.ErrNoCertificatesConfigured {
 			// do nothing
 		} else if err != nil {
@@ -138,12 +121,16 @@ func RunServe(
 			server.TLSConfig = &tls.Config{Certificates: cert}
 		}
 
+		if d.Registry().Tracer().IsLoaded() {
+			server.RegisterOnShutdown(d.Registry().Tracer().Close)
+		}
+
 		if err := graceful.Graceful(func() error {
 			if cert != nil {
-				logger.Printf("Listening on https://%s", addr)
+				logger.Printf("Listening on https://%s", d.Configuration().ListenOn())
 				return server.ListenAndServeTLS("", "")
 			}
-			logger.Printf("Listening on http://%s", addr)
+			logger.Printf("Listening on http://%s", d.Configuration().ListenOn())
 			return server.ListenAndServe()
 		}, server.Shutdown); err != nil {
 			logger.Fatalf("Unable to gracefully shutdown HTTP(s) server because %v", err)

@@ -1,46 +1,49 @@
 module github.com/ory/keto
 
 require (
-	github.com/OneOfOne/xxhash v1.2.2 // indirect
 	github.com/akutz/goof v0.1.2 // indirect
 	github.com/akutz/gotil v0.1.0
-	github.com/containerd/continuity v0.0.0-20181023183536-c220ac4f01b8 // indirect
-	github.com/dchest/siphash v1.2.0 // indirect
+	github.com/containerd/continuity v0.0.0-20200228182428-0f16d7a0959c // indirect
 	github.com/go-errors/errors v1.0.1
-	github.com/go-sql-driver/mysql v1.4.0
-	github.com/gobuffalo/packr v1.16.0
+	github.com/go-openapi/errors v0.19.2
+	github.com/go-openapi/runtime v0.19.5
+	github.com/go-openapi/strfmt v0.19.3
+	github.com/go-openapi/swag v0.19.5
+	github.com/go-openapi/validate v0.19.3
+	github.com/go-sql-driver/mysql v1.5.0
+	github.com/go-swagger/go-swagger v0.21.1-0.20200107003254-1c98855b472d
+	github.com/gobuffalo/packr v1.24.1
 	github.com/gobwas/glob v0.2.3 // indirect
-	github.com/golang/gddo v0.0.0-20181009135830-6c035858b4d7 // indirect
+	github.com/gorilla/mux v1.7.1 // indirect
+	github.com/gorilla/sessions v1.1.3
+	github.com/jackc/pgx/v4 v4.4.1
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/julienschmidt/httprouter v1.2.0
 	github.com/kardianos/osext v0.0.0-20170510131534-ae77be60afb1 // indirect
-	github.com/konsorten/go-windows-terminal-sequences v1.0.1 // indirect
-	github.com/lib/pq v1.0.0
-	github.com/meatballhat/negroni-logrus v0.0.0-20170801195057-31067281800f
-	github.com/mitchellh/mapstructure v1.1.2 // indirect
 	github.com/open-policy-agent/opa v0.10.1
-	github.com/opencontainers/runc v1.0.0-rc5 // indirect
-	github.com/ory/go-convenience v0.1.0
-	github.com/ory/graceful v0.1.0
-	github.com/ory/herodot v0.5.0
-	github.com/ory/x v0.0.33
+	github.com/ory/analytics-go/v4 v4.0.1
+	github.com/ory/go-acc v0.2.1
+	github.com/ory/graceful v0.1.1
+	github.com/ory/herodot v0.7.0
+	github.com/ory/sdk/swagutil v0.0.0-20200417161747-f12e98ecfd2e
+	github.com/ory/viper v1.7.4
+	github.com/ory/x v0.0.111
 	github.com/pborman/uuid v1.2.0
-	github.com/pkg/errors v0.8.0
-	github.com/rcrowley/go-metrics v0.0.0-20180503174638-e2704e165165 // indirect
-	github.com/rubenv/sql-migrate v0.0.0-20181106121204-ba2c6a7295c5
-	github.com/sirupsen/logrus v1.1.1
-	github.com/spf13/cobra v0.0.3
-	github.com/spf13/viper v1.2.1
-	github.com/stretchr/testify v1.2.2
+	github.com/pkg/errors v0.9.1
+	github.com/pkg/profile v1.3.0 // indirect
+	github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a // indirect
+	github.com/rs/cors v1.6.0
+	github.com/rubenv/sql-migrate v0.0.0-20190327083759-54bad0a9b051
+	github.com/sirupsen/logrus v1.5.0
+	github.com/spf13/cobra v0.0.7
+	github.com/spf13/viper v1.6.2 // indirect
+	github.com/sqs/goreturns v0.0.0-20181028201513-538ac6014518
+	github.com/stretchr/testify v1.5.1
+	github.com/tidwall/sjson v1.1.1 // indirect
 	github.com/urfave/negroni v1.0.0
 	github.com/yashtewari/glob-intersection v0.0.0-20180916065949-5c77d914dd0b // indirect
-	github.com/ziutek/mymysql v1.5.4 // indirect
-	golang.org/x/crypto v0.0.0-20181025113841-85e1b3f9139a // indirect
-	golang.org/x/oauth2 v0.0.0-20181017192945-9dcd33a902f4 // indirect
-	golang.org/x/sys v0.0.0-20181025063200-d989b31c8746 // indirect
-	google.golang.org/api v0.0.0-20181025000501-39567f0042a0 // indirect
-	google.golang.org/genproto v0.0.0-20181016170114-94acd270e44e // indirect
-	google.golang.org/grpc v1.16.0 // indirect
-	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
-	gopkg.in/resty.v1 v1.9.1
+	golang.org/x/lint v0.0.0-20200302205851-738671d3881b // indirect
+	golang.org/x/tools v0.0.0-20200401192744-099440627f01
 )
+
+go 1.14

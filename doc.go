@@ -1,5 +1,7 @@
 // Package main ORY Keto
 //
+// Ory Keto is a cloud native access control server providing best-practice patterns (RBAC, ABAC, ACL, AWS IAM Policies, Kubernetes Roles, ...) via REST APIs.
+//
 //     Schemes: http, https
 //     Host:
 //     BasePath: /

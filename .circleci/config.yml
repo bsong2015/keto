@@ -1,74 +1,37 @@
-# Golang CircleCI 2.0 configuration file
-#
-# Check https://circleci.com/docs/2.0/language-go/ for more details
-version: 2
+version: 2.1
+
+orbs:
+  sdk: ory/sdk@0.1.33
+  changelog: ory/changelog@0.0.9
+  goreleaser: ory/goreleaser@0.1.7
+  slack: circleci/slack@3.4.2
+  nancy: ory/nancy@0.0.9
+  docs: ory/docs@0.0.4
+  golangci: ory/golangci@0.0.4
+
 jobs:
-  format:
-    docker:
-      - image: circleci/golang:1.11
-    working_directory: /go/src/github.com/ory/keto
-    steps:
-      - checkout
-      - run:
-          name: Enable go1.11 modules
-          command: |
-            echo 'export GO111MODULE=on' >> $BASH_ENV
-            source $BASH_ENV
-      - run: curl -L https://git.io/vp6lP | sh -s -- -b ./bin
-      - run: mv ./bin/* $GOPATH/bin
-      - run: go mod download
-      - run: gometalinter --disable-all --enable=gofmt --enable=vet --enable=gosec --vendor ./...
-
-  swagger:
-    docker:
-      - image: circleci/golang:1.11
-    working_directory: /go/src/github.com/ory/keto
-    steps:
-      - checkout
-      - run: make init
-      - run: make sdk
-      - run: git add -A && git diff --exit-code
-
-  release-npm:
-    docker:
-      - image: circleci/node:8.9.3
-    working_directory: ~/hydra
-    steps:
-      - checkout
-      - run: echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" > ~/.npmrc
-      - run: |
-          npm version -f --no-git-tag-version $CIRCLE_TAG
-      - run: npm view ory-hydra-sdk
-      - run: npm whoami
-      - run: npm publish
-
   test:
     docker:
-      - image: circleci/golang:1.11
+      - image: circleci/golang:1.14
         environment:
-        - TEST_DATABASE_POSTGRESQL=postgres://test:test@localhost:5432/keto?sslmode=disable
-        - TEST_DATABASE_MYSQL=root:test@(localhost:3306)/mysql?parseTime=true
+          - TEST_DATABASE_POSTGRESQL=postgres://test:test@localhost:5432/keto?sslmode=disable
+          - TEST_DATABASE_MYSQL=root:test@(localhost:3306)/mysql?parseTime=true
       - image: postgres:9.5
         environment:
-        - POSTGRES_USER=test
-        - POSTGRES_PASSWORD=test
-        - POSTGRES_DB=keto
-      - image: mysql:5.7
+          - POSTGRES_USER=test
+          - POSTGRES_PASSWORD=test
+          - POSTGRES_DB=keto
+      - image: mysql:8.0
         environment:
-        - MYSQL_ROOT_PASSWORD=test
+          - MYSQL_ROOT_PASSWORD=test
     working_directory: /go/src/github.com/ory/keto
     steps:
-      - run:
-          name: Enable go1.11 modules
-          command: |
-            echo 'export GO111MODULE=on' >> $BASH_ENV
-            source $BASH_ENV
       - checkout
-      - run: go get -u github.com/go-swagger/go-swagger/cmd/swagger github.com/bradfitz/goimports github.com/mattn/goveralls golang.org/x/tools/cmd/cover github.com/ory/go-acc
-
+      - setup_remote_docker
       # Installation
       - run: go mod verify
       - run: go install github.com/ory/keto
+      - run: go install github.com/go-swagger/go-swagger/cmd/swagger github.com/bradfitz/goimports github.com/mattn/goveralls golang.org/x/tools/cmd/cover github.com/ory/go-acc
 
       # Tests
       - run: go test -race -short -v $(go list ./... | grep -v cmd)
@@ -78,83 +41,16 @@ jobs:
       # Submit coverage details
       - run: test -z "$CIRCLE_PR_NUMBER" && goveralls -service=circle-ci -coverprofile=coverage.txt -repotoken=$COVERALLS_REPO_TOKEN || echo "forks are not allowed to push to coveralls"
 
-  build-docker:
-    docker:
-      - image: library/docker:17.10
-    steps:
-      - checkout
-      - setup_remote_docker:
-          version: 17.10.0-ce
-      - run: docker build -f Dockerfile -t keto-test .
-      - run: docker run keto-test version
-
-  release-docker:
-    docker:
-      - image: circleci/golang:1.9
-    working_directory: /go/src/github.com/ory/keto
-    steps:
-      - checkout
-      - setup_remote_docker:
-          version: 17.10.0-ce
-      - run: docker build --build-arg git_tag=$(git describe --tags) --build-arg git_commit=$(git rev-parse HEAD) -f Dockerfile -t oryd/keto:$(echo $CIRCLE_TAG | tr '+' '_') .
-      - run: docker login --username "$DOCKER_USERNAME" --password "$DOCKER_PASSWORD"
-      - run: docker push oryd/keto:$(echo $CIRCLE_TAG | tr '+' '_')
-
-  release-docs:
-    docker:
-      - image: alpine/git:1.0.4
-    working_directory: /go/src/github.com/ory/keto
-    steps:
-      - checkout
-      - run: git config --global user.email "hi@ory.am"
-      - run: git config --global user.name "ORY Continuous Integration"
-      - run: "git clone https://arekkas:$DOCS_TOKEN_PUSH@github.com/ory/docs.git ../docs"
-      - run: "cp ./docs/api.swagger.json ../docs/apis/keto.json"
-      - run: "(cd ../docs && git add -A && git commit -a -m \"Updates ORY Keto Swagger definitions\" && git push origin) || exit 0"
-
-  release-changelog:
-    docker:
-      - image: circleci/ruby:2.4-node
-    steps:
-      - checkout
-      - run: gem install github_changelog_generator
-      - run: sudo npm i -g doctoc
-      - run: github_changelog_generator -u ory -p keto -o CHANGELOG.md --token $GITHUB_TOKEN
-      - run: doctoc CHANGELOG.md
-      - run: doctoc README.md
-      - run: git config --global user.email "circleci@ory.am"
-      - run: git config --global user.name "ORY Continuous Integration"
-      - run: git add CHANGELOG.md
-      - run: git add README.md
-      - run: |
-          git commit -a -m "docs: Incorporates changes from version $(git describe --tags)" || true
-      - run: git remote rm origin
-      - run: git remote add origin https://arekkas:$GITHUB_TOKEN@github.com/ory/keto.git
-      - run: git push origin HEAD:master || true
-
-  release-binaries:
-    docker:
-      - image: circleci/golang:1.11
-    working_directory: /go/src/github.com/ory/keto
-    steps:
-      - run:
-          name: Update PATH and Define Environment Variable at Runtime
-          command: |
-            echo 'export GO111MODULE=on' >> $BASH_ENV
-            source $BASH_ENV
-      - checkout
-      - run: GO111MODULE=off go get -u github.com/mitchellh/gox github.com/tcnksm/ghr github.com/gobuffalo/packr/packr
-      - run: packr
-      - run: |
-          gox -parallel=2 -ldflags "-X github.com/ory/keto/cmd.Version=`git describe --tags` -X github.com/ory/keto/cmd.BuildTime=`TZ=UTC date -u '+%Y-%m-%dT%H:%M:%SZ'` -X github.com/ory/keto/cmd.GitHash=`git rev-parse HEAD`" -output "dist/{{.Dir}}-{{.OS}}-{{.Arch}}";
-      - run: packr clean
-      - run: ghr -t $GITHUB_TOKEN -u $CIRCLE_PROJECT_USERNAME -r $CIRCLE_PROJECT_REPONAME --replace `git describe --tags` dist/
-
 workflows:
   version: 2
   "test, build, and relase":
     jobs:
-      - format:
+      - nancy/test:
+          filters:
+            tags:
+              only: /.*/
+      -
+        golangci/lint:
           filters:
             tags:
               only: /.*/
@@ -162,53 +58,86 @@ workflows:
           filters:
             tags:
               only: /.*/
-      - release-docs:
-          filters:
-            branches:
-              only: master
-      - swagger:
-          filters:
-            tags:
-              only: /.*/
-      - build-docker:
+      - changelog/generate:
           requires:
             - test
-            - swagger
-            - format
+            - golangci/lint
           filters:
             tags:
               only: /.*/
-      - release-binaries:
+            branches:
+              only: master
+      - docs/build:
           requires:
-            - build-docker
+            - test
+            - golangci/lint
+          filters:
+            tags:
+              only: /.*/
+            branches:
+              only: master
+      - sdk/generate:
+          appname: Ory_Keto
+          requires:
+            - test
+            - golangci/lint
+      - sdk/release:
+          requires:
+            - test
+            - golangci/lint
+            - goreleaser/release
           filters:
             tags:
               only: /.*/
             branches:
               ignore: /.*/
-      - release-docker:
-          requires:
-            - build-docker
+      -
+        goreleaser/test:
           filters:
             tags:
               only: /.*/
+      -
+        goreleaser/release:
+          requires:
+            - goreleaser/test
+            - test
+            - golangci/lint
+          filters:
             branches:
               ignore: /.*/
-      - release-npm:
+            tags:
+              only: /.*/
+      -
+        goreleaser/newsletter-draft:
+          chimp-list: f605a41b53
+          chimp-segment: 6478605
           requires:
-            - build-docker
+            - goreleaser/release
           filters:
             tags:
               only: /.*/
-            branches:
-              ignore: /.*/
-      - release-changelog:
+      -
+        slack/approval-notification:
+          message: Pending approval
+          channel: release-automation
           requires:
-            - release-docker
-            - release-binaries
-            - release-npm
+            - goreleaser/newsletter-draft
           filters:
             tags:
               only: /.*/
-            branches:
-              ignore: /.*/
+      -
+        newsletter-approval:
+          type: approval
+          requires:
+            - goreleaser/newsletter-draft
+          filters:
+            tags:
+              only: /.*/
+      -
+        goreleaser/newsletter-send:
+          chimp-list: f605a41b53
+          requires:
+            - newsletter-approval
+          filters:
+            tags:
+              only: /.*/

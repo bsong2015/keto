@@ -8,7 +8,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/open-policy-agent/opa/storage"
 	"github.com/pkg/errors"
-	"github.com/rubenv/sql-migrate"
+	migrate "github.com/rubenv/sql-migrate"
 
 	"github.com/ory/x/dbal"
 	"github.com/ory/x/sqlcon"
@@ -73,7 +73,7 @@ func NewSQLManager(db *sqlx.DB) *SQLManager {
 
 func (m *SQLManager) CreateSchemas(db *sqlx.DB) (int, error) {
 	migrate.SetTable("keto_storage_migration")
-	n, err := migrate.Exec(db.DB, db.DriverName(), Migrations[dbal.MustCanonicalize(db.DriverName())], migrate.Up)
+	n, err := migrate.Exec(db.DB, dbal.Canonicalize(db.DriverName()), Migrations[dbal.MustCanonicalize(db.DriverName())], migrate.Up)
 	if err != nil {
 		return 0, errors.Wrapf(err, "could not migrate sql schema completely, applied only %d migrations", n)
 	}
@@ -109,10 +109,11 @@ func (m *SQLManager) Upsert(ctx context.Context, collection, key string, value i
 
 func (m *SQLManager) List(ctx context.Context, collection string, value interface{}, limit, offset int) error {
 	var items []string
+	query := "SELECT document FROM rego_data WHERE collection=? ORDER BY id ASC LIMIT ? OFFSET ?"
 	if err := m.db.SelectContext(
 		ctx,
 		&items,
-		m.db.Rebind("SELECT document FROM rego_data WHERE collection=? ORDER BY id ASC LIMIT ? OFFSET ?"), collection, limit, offset,
+		m.db.Rebind(query), collection, limit, offset,
 	); err != nil {
 		return sqlcon.HandleError(err)
 	}

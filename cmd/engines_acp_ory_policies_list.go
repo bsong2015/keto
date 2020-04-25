@@ -16,12 +16,11 @@ package cmd
 
 import (
 	"fmt"
-	"net/http"
+
+	"github.com/ory/keto/internal/httpclient/client/engines"
 
 	"github.com/spf13/cobra"
 
-	"github.com/ory/keto/sdk/go/keto/swagger"
-	"github.com/ory/keto/x"
 	"github.com/ory/x/flagx"
 
 	"github.com/ory/keto/cmd/client"
@@ -36,10 +35,14 @@ var enginesAcpOryPoliciesListCmd = &cobra.Command{
 		cmdx.MinArgs(cmd, args, 1)
 		client.CheckLadonFlavor(args[0])
 
-		c := swagger.NewEnginesApiWithBasePath(client.EndpointURL(cmd))
-		r, res, err := c.ListOryAccessControlPolicies(args[0], int64(flagx.MustGetInt(cmd, "limit")), int64(flagx.MustGetInt(cmd, "offset")))
-		x.CheckResponse(err, http.StatusOK, res)
-		fmt.Println(cmdx.FormatResponse(r))
+		limit := int64(flagx.MustGetInt(cmd, "limit"))
+		offset := int64(flagx.MustGetInt(cmd, "offset"))
+		c := client.NewClient(cmd)
+		r, err := c.Engines.ListOryAccessControlPolicies(
+			engines.NewListOryAccessControlPoliciesParams().WithFlavor(args[0]).WithLimit(&limit).WithOffset(&offset),
+		)
+		cmdx.Must(err, "Unable to list ORY Access Control Policies: %s", err)
+		fmt.Println(cmdx.FormatResponse(r.Payload))
 	},
 }
 

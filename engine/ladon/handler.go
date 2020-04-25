@@ -12,10 +12,10 @@ import (
 	"github.com/pborman/uuid"
 	"github.com/pkg/errors"
 
-	"github.com/ory/go-convenience/stringslice"
 	"github.com/ory/herodot"
 	"github.com/ory/keto/engine"
 	kstorage "github.com/ory/keto/storage"
+	"github.com/ory/x/stringslice"
 )
 
 // swagger:ignore
@@ -86,7 +86,9 @@ func (e *Engine) Register(r *httprouter.Router) {
 	//
 	// Check if a request is allowed
 	//
-	// Use this endpoint to check if a request is allowed or not.
+	// Use this endpoint to check if a request is allowed or not. If the request is allowed, a 200 response with
+	// `{"allowed":"true"}` will be sent. If the request is denied, a 403 response with `{"allowed":"false"}` will
+	// be sent instead.
 	//
 	//
 	//     Consumes:
@@ -99,6 +101,7 @@ func (e *Engine) Register(r *httprouter.Router) {
 	//
 	//     Responses:
 	//       200: authorizationResult
+	//       403: authorizationResult
 	//       500: genericError
 	r.POST(BasePath+"/allowed", e.engine.Evaluate(e.eval))
 
@@ -162,7 +165,7 @@ func (e *Engine) Register(r *httprouter.Router) {
 	//     Schemes: http, https
 	//
 	//     Responses:
-	//       201: emptyResponse
+	//       204: emptyResponse
 	//       500: genericError
 	r.DELETE(BasePath+"/policies/:id", e.sh.Delete(e.policiesDelete))
 
@@ -238,7 +241,7 @@ func (e *Engine) Register(r *httprouter.Router) {
 	//     Schemes: http, https
 	//
 	//     Responses:
-	//       201: emptyResponse
+	//       204: emptyResponse
 	//       500: genericError
 	r.DELETE(BasePath+"/roles/:id", e.sh.Delete(e.rolesDelete))
 
@@ -280,13 +283,13 @@ func (e *Engine) Register(r *httprouter.Router) {
 	//     Schemes: http, https
 	//
 	//     Responses:
-	//       201: emptyResponse
+	//       200: emptyResponse
 	//       500: genericError
 	r.DELETE(BasePath+"/roles/:id/members/:member", e.sh.Upsert(e.rolesMembersRemove))
 }
 
 func (e *Engine) rolesList(ctx context.Context, r *http.Request, ps httprouter.Params) (*kstorage.ListRequest, error) {
-	var p Roles
+	var p kstorage.Roles
 
 	f, err := flavor(ps)
 	if err != nil {
@@ -296,11 +299,12 @@ func (e *Engine) rolesList(ctx context.Context, r *http.Request, ps httprouter.P
 	return &kstorage.ListRequest{
 		Collection: roleCollection(f),
 		Value:      &p,
+		FilterFunc: kstorage.ListByQuery,
 	}, nil
 }
 
 func (e *Engine) rolesGet(ctx context.Context, r *http.Request, ps httprouter.Params) (*kstorage.GetRequest, error) {
-	var p Role
+	var p kstorage.Role
 
 	f, err := flavor(ps)
 	if err != nil {
@@ -315,7 +319,7 @@ func (e *Engine) rolesGet(ctx context.Context, r *http.Request, ps httprouter.Pa
 }
 
 func (e *Engine) rolesUpsert(ctx context.Context, r *http.Request, ps httprouter.Params) (*kstorage.UpsertRequest, error) {
-	var p Role
+	var p kstorage.Role
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		return nil, errors.WithStack(err)
 	}
@@ -354,12 +358,12 @@ func (e *Engine) rolesMembersAdd(ctx context.Context, r *http.Request, ps httpro
 		return nil, err
 	}
 
-	var i Role
+	var i kstorage.Role
 	if err := json.NewDecoder(r.Body).Decode(&i); err != nil {
 		return nil, errors.WithStack(err)
 	}
 
-	var ro Role
+	var ro kstorage.Role
 	if err := e.s.Get(ctx, roleCollection(f), ps.ByName("id"), &ro); errors.Cause(err) == &herodot.ErrNotFound {
 		i.ID = ps.ByName("id")
 		ro = i
@@ -383,7 +387,7 @@ func (e *Engine) rolesMembersRemove(ctx context.Context, r *http.Request, ps htt
 		return nil, err
 	}
 
-	var ro Role
+	var ro kstorage.Role
 	if err := e.s.Get(ctx, roleCollection(f), ps.ByName("id"), &ro); err != nil {
 		return nil, err
 	}
@@ -400,7 +404,7 @@ func (e *Engine) rolesMembersRemove(ctx context.Context, r *http.Request, ps htt
 }
 
 func (e *Engine) policiesCreate(ctx context.Context, r *http.Request, ps httprouter.Params) (*kstorage.UpsertRequest, error) {
-	var p Policy
+	var p kstorage.Policy
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		return nil, errors.WithStack(err)
 	}
@@ -423,7 +427,7 @@ func (e *Engine) policiesCreate(ctx context.Context, r *http.Request, ps httprou
 }
 
 func (e *Engine) policiesList(ctx context.Context, r *http.Request, ps httprouter.Params) (*kstorage.ListRequest, error) {
-	var p Policies
+	var p kstorage.Policies
 
 	f, err := flavor(ps)
 	if err != nil {
@@ -433,6 +437,7 @@ func (e *Engine) policiesList(ctx context.Context, r *http.Request, ps httproute
 	return &kstorage.ListRequest{
 		Collection: policyCollection(f),
 		Value:      &p,
+		FilterFunc: kstorage.ListByQuery,
 	}, nil
 }
 
@@ -449,7 +454,7 @@ func (e *Engine) policiesDelete(ctx context.Context, r *http.Request, ps httprou
 }
 
 func (e *Engine) policiesGet(ctx context.Context, r *http.Request, ps httprouter.Params) (*kstorage.GetRequest, error) {
-	var p Policy
+	var p kstorage.Policy
 
 	f, err := flavor(ps)
 	if err != nil {

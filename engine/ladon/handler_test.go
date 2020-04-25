@@ -2,12 +2,13 @@ package ladon
 
 import (
 	"fmt"
-	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
-	"github.com/ory/keto/sdk/go/keto/swagger"
-	"github.com/ory/keto/x"
+	"github.com/ory/keto/internal/httpclient/client"
+	"github.com/ory/keto/internal/httpclient/client/engines"
+	"github.com/ory/keto/internal/httpclient/models"
 
 	"github.com/gobuffalo/packr"
 	"github.com/julienschmidt/httprouter"
@@ -18,16 +19,27 @@ import (
 
 	"github.com/ory/herodot"
 	"github.com/ory/keto/engine"
-	"github.com/ory/keto/storage"
+	kstorage "github.com/ory/keto/storage"
 )
+
+func nc(t *testing.T, u string) *client.OryKeto {
+	uu, err := url.ParseRequestURI(u)
+	require.NoError(t, err)
+
+	return client.NewHTTPClientWithConfig(nil, &client.TransportConfig{
+		Host:     uu.Host,
+		BasePath: uu.Path,
+		Schemes:  []string{uu.Scheme},
+	})
+}
 
 func TestAllowed(t *testing.T) {
 	box := packr.NewBox("./rego")
 	compiler, err := engine.NewCompiler(box, logrus.New())
 	require.NoError(t, err)
 
-	s := storage.NewMemoryManager()
-	sh := storage.NewHandler(s, herodot.NewJSONWriter(nil))
+	s := kstorage.NewMemoryManager()
+	sh := kstorage.NewHandler(s, herodot.NewJSONWriter(nil))
 	e := engine.NewEngine(compiler, herodot.NewJSONWriter(nil))
 	le := NewEngine(s, sh, e, herodot.NewJSONWriter(nil))
 
@@ -39,21 +51,20 @@ func TestAllowed(t *testing.T) {
 	ts := httptest.NewServer(n)
 	defer ts.Close()
 
-	cl := swagger.NewEnginesApiWithBasePath(ts.URL)
-
+	cl := nc(t, ts.URL)
 	for _, f := range EnabledFlavors {
 		t.Run(fmt.Sprintf("flavor=%s", f), func(t *testing.T) {
 			t.Run(fmt.Sprint("action=create"), func(t *testing.T) {
 				for _, p := range policies[f] {
 					t.Run(fmt.Sprintf("policy=%s", p.ID), func(t *testing.T) {
-						_, res, err := cl.UpsertOryAccessControlPolicy(f, toSwaggerPolicy(p))
-						x.CheckResponseTest(t, err, http.StatusOK, res)
+						_, err := cl.Engines.UpsertOryAccessControlPolicy(engines.NewUpsertOryAccessControlPolicyParams().WithFlavor(f).WithBody(toSwaggerPolicy(p)))
+						require.NoError(t, err)
 					})
 				}
 				for _, r := range roles[f] {
 					t.Run(fmt.Sprintf("role=%s", r.ID), func(t *testing.T) {
-						_, res, err := cl.UpsertOryAccessControlPolicyRole(f, toSwaggerRole(r))
-						x.CheckResponseTest(t, err, http.StatusOK, res)
+						_, err := cl.Engines.UpsertOryAccessControlPolicyRole(engines.NewUpsertOryAccessControlPolicyRoleParams().WithFlavor(f).WithBody(toSwaggerRole(r)))
+						require.NoError(t, err)
 					})
 				}
 			})
@@ -61,9 +72,14 @@ func TestAllowed(t *testing.T) {
 			t.Run("action=authorize", func(t *testing.T) {
 				for k, c := range requests[f] {
 					t.Run(fmt.Sprintf("case=%d", k), func(t *testing.T) {
-						d, res, err := cl.DoOryAccessControlPoliciesAllow(f, c.req)
-						x.CheckResponseTest(t, err, http.StatusOK, res)
-						assert.Equal(t, c.allowed, d.Allowed)
+						d, err := cl.Engines.DoOryAccessControlPoliciesAllow(engines.NewDoOryAccessControlPoliciesAllowParams().WithFlavor(f).WithBody(&c.req))
+						if c.allowed {
+							require.NoError(t, err)
+							assert.Equal(t, c.allowed, *d.Payload.Allowed)
+						} else {
+							require.IsType(t, engines.NewDoOryAccessControlPoliciesAllowForbidden(), err)
+							assert.Equal(t, c.allowed, *(err.(*engines.DoOryAccessControlPoliciesAllowForbidden).Payload.Allowed))
+						}
 					})
 				}
 			})
@@ -72,34 +88,34 @@ func TestAllowed(t *testing.T) {
 }
 
 func TestValidatePolicy(t *testing.T) {
-	_, err := validatePolicy(Policy{})
+	_, err := validatePolicy(kstorage.Policy{})
 	require.Error(t, err)
 
-	_, err = validatePolicy(Policy{Effect: "bar"})
+	_, err = validatePolicy(kstorage.Policy{Effect: "bar"})
 	require.Error(t, err)
 
-	p, err := validatePolicy(Policy{Effect: "allow"})
+	p, err := validatePolicy(kstorage.Policy{Effect: "allow"})
 	require.NoError(t, err)
 	assert.NotEmpty(t, p.ID)
 
-	p, err = validatePolicy(Policy{Effect: "deny", ID: "foo"})
+	p, err = validatePolicy(kstorage.Policy{Effect: "deny", ID: "foo"})
 	require.NoError(t, err)
 	assert.Equal(t, "foo", p.ID)
 }
 
 func crudts() *httptest.Server {
-	s := storage.NewMemoryManager()
-	sh := storage.NewHandler(s, herodot.NewJSONWriter(nil))
+	s := kstorage.NewMemoryManager()
+	sh := kstorage.NewHandler(s, herodot.NewJSONWriter(nil))
 	e := NewEngine(s, sh, nil, herodot.NewJSONWriter(nil))
 	r := httprouter.New()
 	e.Register(r)
 	return httptest.NewServer(r)
 }
 
-func toSwaggerPolicy(p Policy) swagger.OryAccessControlPolicy {
-	return swagger.OryAccessControlPolicy{
+func toSwaggerPolicy(p kstorage.Policy) *models.OryAccessControlPolicy {
+	return &models.OryAccessControlPolicy{
 		Actions:     p.Actions,
-		Id:          p.ID,
+		ID:          p.ID,
 		Resources:   p.Resources,
 		Subjects:    p.Subjects,
 		Effect:      p.Effect,
@@ -108,10 +124,10 @@ func toSwaggerPolicy(p Policy) swagger.OryAccessControlPolicy {
 	}
 }
 
-func fromSwaggerPolicy(p swagger.OryAccessControlPolicy) Policy {
-	return Policy{
+func fromSwaggerPolicy(p models.OryAccessControlPolicy) kstorage.Policy {
+	return kstorage.Policy{
 		Actions:     p.Actions,
-		ID:          p.Id,
+		ID:          p.ID,
 		Resources:   p.Resources,
 		Subjects:    p.Subjects,
 		Effect:      p.Effect,
@@ -120,17 +136,17 @@ func fromSwaggerPolicy(p swagger.OryAccessControlPolicy) Policy {
 	}
 }
 
-func toSwaggerRole(r Role) swagger.OryAccessControlPolicyRole {
-	return swagger.OryAccessControlPolicyRole{
+func toSwaggerRole(r kstorage.Role) *models.OryAccessControlPolicyRole {
+	return &models.OryAccessControlPolicyRole{
 		Members: r.Members,
-		Id:      r.ID,
+		ID:      r.ID,
 	}
 }
 
-func fromSwaggerRole(r swagger.OryAccessControlPolicyRole) Role {
-	return Role{
+func fromSwaggerRole(r models.OryAccessControlPolicyRole) kstorage.Role {
+	return kstorage.Role{
 		Members: r.Members,
-		ID:      r.Id,
+		ID:      r.ID,
 	}
 }
 
@@ -138,36 +154,108 @@ func TestPolicyCRUD(t *testing.T) {
 	ts := crudts()
 	defer ts.Close()
 
-	c := swagger.NewEnginesApiWithBasePath(ts.URL)
+	c := nc(t, ts.URL)
 	for _, f := range EnabledFlavors {
 		for l, p := range policies[f] {
-			_, resp, err := c.GetOryAccessControlPolicy(f, p.ID)
-			x.CheckResponseTest(t, err, http.StatusNotFound, resp)
+			_, err := c.Engines.GetOryAccessControlPolicy(engines.NewGetOryAccessControlPolicyParams().WithFlavor(f).WithID(p.ID))
+			require.Error(t, err)
 
-			_, resp, err = c.UpsertOryAccessControlPolicy(f, toSwaggerPolicy(p))
-			x.CheckResponseTest(t, err, http.StatusOK, resp)
+			_, err = c.Engines.UpsertOryAccessControlPolicy(engines.NewUpsertOryAccessControlPolicyParams().WithFlavor(f).WithBody(toSwaggerPolicy(p)))
+			require.NoError(t, err)
 
-			o, resp, err := c.GetOryAccessControlPolicy(f, p.ID)
-			x.CheckResponseTest(t, err, http.StatusOK, resp)
-			assert.Equal(t, p, fromSwaggerPolicy(*o))
+			o, err := c.Engines.GetOryAccessControlPolicy(engines.NewGetOryAccessControlPolicyParams().WithFlavor(f).WithID(p.ID))
+			require.NoError(t, err)
+			assert.Equal(t, p, fromSwaggerPolicy(*o.Payload))
 
-			os, resp, err := c.ListOryAccessControlPolicies(f, 100, 0)
-			x.CheckResponseTest(t, err, http.StatusOK, resp)
+			limit, offset := int64(100), int64(0)
+			os, err := c.Engines.ListOryAccessControlPolicies(engines.NewListOryAccessControlPoliciesParams().WithFlavor(f).WithLimit(&limit).WithOffset(&offset))
+			require.NoError(t, err)
 
-			var ps Policies
-			for _, v := range os {
-				ps = append(ps, fromSwaggerPolicy(v))
+			var ps kstorage.Policies
+			for _, v := range os.Payload {
+				ps = append(ps, fromSwaggerPolicy(*v))
 			}
 
 			assert.Equal(t, ps, policies[f][:l+1])
+
+		}
+
+		// test action filter
+		{
+			limit, offset := int64(100), int64(0)
+			action := "create"
+			os1, err := c.Engines.ListOryAccessControlPolicies(engines.NewListOryAccessControlPoliciesParams().WithFlavor(f).WithLimit(&limit).WithOffset(&offset).WithAction(&action))
+			require.NoError(t, err)
+
+			var ps kstorage.Policies
+			for _, v := range os1.Payload {
+				ps = append(ps, fromSwaggerPolicy(*v))
+			}
+
+			if len(policies[f]) > 0 {
+				assert.Equal(t, ps, kstorage.Policies{policies[f][0], policies[f][2], policies[f][3]})
+			}
+		}
+
+		// test subject filter
+		{
+			limit, offset := int64(100), int64(0)
+			subject := "siri"
+			os1, err := c.Engines.ListOryAccessControlPolicies(engines.NewListOryAccessControlPoliciesParams().WithFlavor(f).WithLimit(&limit).WithOffset(&offset).WithSubject(&subject))
+			require.NoError(t, err)
+
+			var ps kstorage.Policies
+			for _, v := range os1.Payload {
+				ps = append(ps, fromSwaggerPolicy(*v))
+			}
+
+			if len(policies[f]) > 0 {
+				assert.Equal(t, ps, kstorage.Policies{policies[f][1]})
+			}
+		}
+
+		// test resource filter
+		{
+			limit, offset := int64(100), int64(0)
+			resource := "matrix"
+			os1, err := c.Engines.ListOryAccessControlPolicies(engines.NewListOryAccessControlPoliciesParams().WithFlavor(f).WithLimit(&limit).WithOffset(&offset).WithResource(&resource))
+			require.NoError(t, err)
+
+			var ps kstorage.Policies
+			for _, v := range os1.Payload {
+				ps = append(ps, fromSwaggerPolicy(*v))
+			}
+
+			if len(policies[f]) > 0 {
+				assert.Equal(t, ps, kstorage.Policies{policies[f][0]})
+			}
+		}
+
+		// test combined filters
+		{
+			limit, offset := int64(100), int64(0)
+			subject := "group1"
+			action := "create"
+			resource := "forbidden_matrix"
+			os1, err := c.Engines.ListOryAccessControlPolicies(engines.NewListOryAccessControlPoliciesParams().WithFlavor(f).WithLimit(&limit).WithOffset(&offset).WithAction(&action).WithResource(&resource).WithSubject(&subject))
+			require.NoError(t, err)
+
+			var ps kstorage.Policies
+			for _, v := range os1.Payload {
+				ps = append(ps, fromSwaggerPolicy(*v))
+			}
+
+			if len(policies[f]) > 0 {
+				assert.Equal(t, ps, kstorage.Policies{policies[f][0], policies[f][2]})
+			}
 		}
 
 		for _, p := range policies[f] {
-			resp, err := c.DeleteOryAccessControlPolicy(f, p.ID)
-			x.CheckResponseTest(t, err, http.StatusNoContent, resp)
+			_, err := c.Engines.DeleteOryAccessControlPolicy(engines.NewDeleteOryAccessControlPolicyParams().WithFlavor(f).WithID(p.ID))
+			require.NoError(t, err)
 
-			_, resp, err = c.GetOryAccessControlPolicy(f, p.ID)
-			x.CheckResponseTest(t, err, http.StatusNotFound, resp)
+			_, err = c.Engines.GetOryAccessControlPolicy(engines.NewGetOryAccessControlPolicyParams().WithFlavor(f).WithID(p.ID))
+			require.Error(t, err)
 		}
 	}
 }
@@ -176,37 +264,55 @@ func TestRoleCRUD(t *testing.T) {
 	ts := crudts()
 	defer ts.Close()
 
-	c := swagger.NewEnginesApiWithBasePath(ts.URL)
+	c := nc(t, ts.URL)
 	for _, f := range EnabledFlavors {
 		for l, r := range roles[f] {
-			_, resp, err := c.GetOryAccessControlPolicyRole(f, r.ID)
-			x.CheckResponseTest(t, err, http.StatusNotFound, resp)
+			_, err := c.Engines.GetOryAccessControlPolicyRole(engines.NewGetOryAccessControlPolicyRoleParams().WithFlavor(f).WithID(r.ID))
+			require.Error(t, err)
 
-			o, resp, err := c.UpsertOryAccessControlPolicyRole(f, toSwaggerRole(r))
-			x.CheckResponseTest(t, err, http.StatusOK, resp)
-			require.EqualValues(t, r, fromSwaggerRole(*o))
+			ou, err := c.Engines.UpsertOryAccessControlPolicyRole(engines.NewUpsertOryAccessControlPolicyRoleParams().WithFlavor(f).WithBody(toSwaggerRole(r)))
+			require.NoError(t, err)
+			require.EqualValues(t, r, fromSwaggerRole(*ou.Payload))
 
-			o, resp, err = c.GetOryAccessControlPolicyRole(f, r.ID)
-			x.CheckResponseTest(t, err, http.StatusOK, resp)
-			require.EqualValues(t, r, fromSwaggerRole(*o))
+			o, err := c.Engines.GetOryAccessControlPolicyRole(engines.NewGetOryAccessControlPolicyRoleParams().WithFlavor(f).WithID(r.ID))
+			require.NoError(t, err)
+			require.EqualValues(t, r, fromSwaggerRole(*o.Payload))
 
-			os, resp, err := c.ListOryAccessControlPolicyRoles(f, 100, 0)
-			x.CheckResponseTest(t, err, http.StatusOK, resp)
+			limit, offset := int64(100), int64(0)
+			os, err := c.Engines.ListOryAccessControlPolicyRoles(engines.NewListOryAccessControlPolicyRolesParams().WithFlavor(f).WithLimit(&limit).WithOffset(&offset))
+			require.NoError(t, err)
 
-			var ps Roles
-			for _, v := range os {
-				ps = append(ps, fromSwaggerRole(v))
+			var ps kstorage.Roles
+			for _, v := range os.Payload {
+				ps = append(ps, fromSwaggerRole(*v))
 			}
 
 			assert.Equal(t, ps, roles[f][:l+1])
 		}
 
-		for _, r := range roles[f] {
-			resp, err := c.DeleteOryAccessControlPolicyRole(f, r.ID)
-			x.CheckResponseTest(t, err, http.StatusNoContent, resp)
+		// Test member filter
+		{
+			limit, offset := int64(100), int64(0)
+			member := "ben"
+			os, err := c.Engines.ListOryAccessControlPolicyRoles(engines.NewListOryAccessControlPolicyRolesParams().WithFlavor(f).WithLimit(&limit).WithOffset(&offset).WithMember(&member))
+			require.NoError(t, err)
 
-			_, resp, err = c.GetOryAccessControlPolicyRole(f, r.ID)
-			x.CheckResponseTest(t, err, http.StatusNotFound, resp)
+			var ps kstorage.Roles
+			for _, v := range os.Payload {
+				ps = append(ps, fromSwaggerRole(*v))
+			}
+
+			if len(roles[f]) > 0 {
+				assert.Equal(t, ps, kstorage.Roles{roles[f][2]})
+			}
+		}
+
+		for _, r := range roles[f] {
+			_, err := c.Engines.DeleteOryAccessControlPolicyRole(engines.NewDeleteOryAccessControlPolicyRoleParams().WithFlavor(f).WithID(r.ID))
+			require.NoError(t, err)
+
+			_, err = c.Engines.GetOryAccessControlPolicyRole(engines.NewGetOryAccessControlPolicyRoleParams().WithFlavor(f).WithID(r.ID))
+			require.Error(t, err)
 		}
 	}
 }

@@ -16,13 +16,13 @@ package cmd
 
 import (
 	"fmt"
-	"net/http"
+
+	"github.com/ory/keto/internal/httpclient/client/engines"
+	"github.com/ory/keto/internal/httpclient/models"
 
 	"github.com/spf13/cobra"
 
 	"github.com/ory/keto/cmd/client"
-	"github.com/ory/keto/sdk/go/keto/swagger"
-	"github.com/ory/keto/x"
 	"github.com/ory/x/cmdx"
 )
 
@@ -34,16 +34,26 @@ var enginesAcpOryAllowedCmd = &cobra.Command{
 		cmdx.MinArgs(cmd, args, 4)
 		client.CheckLadonFlavor(args[0])
 
-		c := swagger.NewEnginesApiWithBasePath(client.EndpointURL(cmd))
-		a, res, err := c.DoOryAccessControlPoliciesAllow(args[0], swagger.OryAccessControlPolicyAllowedInput{
-			Subject:  args[1],
-			Resource: args[2],
-			Action:   args[3],
-		})
-		x.CheckResponse(err, http.StatusOK, res)
-
-		cmdx.Must(err, "Unable to decode data to json: %s", err)
-		fmt.Println(cmdx.FormatResponse(&a))
+		c := client.NewClient(cmd)
+		res, err := c.Engines.DoOryAccessControlPoliciesAllow(
+			engines.NewDoOryAccessControlPoliciesAllowParams().
+				WithFlavor(args[0]).
+				WithBody(&models.OryAccessControlPolicyAllowedInput{
+					Subject:  args[1],
+					Resource: args[2],
+					Action:   args[3],
+				}),
+		)
+		if err != nil {
+			switch d := err.(type) {
+			case *engines.DoOryAccessControlPoliciesAllowForbidden:
+				fmt.Println(cmdx.FormatResponse(&d.Payload))
+				return
+			default:
+				cmdx.Must(err, "Unable to call ORY Access Control Policy allowed endpoint: %s")
+			}
+		}
+		fmt.Println(cmdx.FormatResponse(&res.Payload))
 	},
 }
 
